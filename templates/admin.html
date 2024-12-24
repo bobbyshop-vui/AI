@@ -1,1 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+</head>
+<body>
+    <h1>Admin Dashboard</h1>
+    
+    <h2>Danh sách Người Dùng</h2>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Email</th>
+        </tr>
+        {% for user in users %}
+        <tr>
+            <td>{{ user[0] }}</td>
+            <td>{{ user[1] }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h2>Lịch Sử Trò Chuyện</h2>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>User ID</th>
+            <th>Message</th>
+        </tr>
+        {% for chat in chats %}
+        <tr>
+            <td>{{ chat[0] }}</td>
+            <td>{{ chat[1] }}</td>
+            <td>{{ chat[2] }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+</body>
+</html>
 
