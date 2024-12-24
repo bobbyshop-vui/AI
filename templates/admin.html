@@ -5,40 +5,64 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard</title>
+    <!-- Thêm Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet" />
 </head>
-<body>
-    <h1>Admin Dashboard</h1>
-    
-    <h2>Danh sách Người Dùng</h2>
-    <table border="1">
-        <tr>
-            <th>ID</th>
-            <th>Email</th>
-        </tr>
-        {% for user in users %}
-        <tr>
-            <td>{{ user[0] }}</td>
-            <td>{{ user[1] }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+<body class="bg-light">
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">Admin Dashboard</h1>
 
-    <h2>Lịch Sử Trò Chuyện</h2>
-    <table border="1">
-        <tr>
-            <th>ID</th>
-            <th>User ID</th>
-            <th>Message</th>
-        </tr>
-        {% for chat in chats %}
-        <tr>
-            <td>{{ chat[0] }}</td>
-            <td>{{ chat[1] }}</td>
-            <td>{{ chat[2] }}</td>
-        </tr>
-        {% endfor %}
-    </table>
+        <div class="row">
+            <!-- Danh sách người dùng -->
+            <div class="col-md-6">
+                <h3>Danh sách người dùng</h3>
+                <table class="table table-bordered table-striped">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Email</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td>{{ user[0] }}</td>  <!-- user_id -->
+                            <td>{{ user[1] }}</td>  <!-- email -->
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
 
+            <!-- Lịch sử trò chuyện của người dùng -->
+            <div class="col-md-6">
+                <h3>Lịch sử trò chuyện</h3>
+                <table class="table table-bordered table-striped">
+                    <thead>
+                        <tr>
+                            <th>User ID</th>
+                            <th>Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for chat in chats %}
+                        <tr>
+                            <td>{{ chat[1] }}</td>  <!-- user_id -->
+                            <td>{{ chat[2] }}</td>  <!-- message -->
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="mt-4">
+            <a href="{{ url_for('chat') }}" class="btn btn-primary">Trở lại trang Chatbot</a>
+            <a href="{{ url_for('logout') }}" class="btn btn-danger">Đăng xuất</a>
+        </div>
+    </div>
+
+    <!-- Thêm Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
-
