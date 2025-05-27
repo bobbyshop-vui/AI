@@ -1,215 +1,231 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
-from flask_mysqldb import MySQL
-from transformers import BertForQuestionAnswering, BertTokenizer
-import torch
+# main.py - ByBy PC AI System with MySQL
+from flask import Flask, request, jsonify, render_template_string
+import mysql.connector
+from difflib import get_close_matches
 import os
-import hashlib
-from datetime import datetime
-from googleapiclient.discovery import build
-import requests
+from dotenv import load_dotenv
+
+# Load biến môi trường
+load_dotenv()
 
 app = Flask(__name__)
 
-# Cấu hình MySQL
-app.config['MYSQL_HOST'] = 'localhost'  # Địa chỉ máy chủ MySQL
-app.config['MYSQL_USER'] = 'root'       # Tên người dùng MySQL
-app.config['MYSQL_PASSWORD'] = 'yourpassword'  # Mật khẩu của MySQL
-app.config['MYSQL_DB'] = 'chatbot_db'  # Tên cơ sở dữ liệu MySQL
-app.config['SECRET_KEY'] = os.urandom(24)
+# ========== KẾT NỐI MYSQL ==========
+def get_db_connection():
+    return mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DB', 'byby_ai')
+    )
 
-mysql = MySQL(app)
-
-# Tải mô hình BERT và Tokenizer
-model = BertForQuestionAnswering.from_pretrained("bert-large-uncased-whole-word-masking-finetuned-squad")
-tokenizer = BertTokenizer.from_pretrained("bert-large-uncased-whole-word-masking-finetuned-squad")
-
-# Cấu hình API Google Custom Search
-GOOGLE_API_KEY = 'YOUR_GOOGLE_API_KEY'  # Thay bằng API Key của bạn
-CX = 'YOUR_CUSTOM_SEARCH_ENGINE_ID'  # Thay bằng Custom Search Engine ID của bạn
-service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
-
-# Cấu hình API thời tiết (OpenWeatherMap)
-WEATHER_API_KEY = 'YOUR_OPENWEATHER_API_KEY'  # Thay bằng API Key của bạn
-weather_url = "http://api.openweathermap.org/data/2.5/weather"
-
-# Hàm mã hóa mật khẩu
-def hash_password(password):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
-
-# Hàm kiểm tra mật khẩu
-def check_password(hashed_password, input_password):
-    return hashed_password == hash_password(input_password)
-
-# Hàm trả lời câu hỏi với BERT
-def get_bert_answer(question, context):
-    inputs = tokenizer.encode_plus(question, context, add_special_tokens=True, return_tensors="pt")
-    outputs = model(**inputs)
-    answer_start_scores, answer_end_scores = outputs.start_logits, outputs.end_logits
-    answer_start = torch.argmax(answer_start_scores)
-    answer_end = torch.argmax(answer_end_scores)
-    answer = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(inputs['input_ids'][0][answer_start:answer_end+1]))
-    return answer
-
-# Hàm tìm kiếm thông tin từ Google
-def google_search(query):
-    res = service.cse().list(q=query, cx=CX).execute()
-    search_results = res.get('items', [])
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
-    if search_results:
-        return search_results[0]['snippet']  # Lấy phần mô tả đầu tiên từ kết quả tìm kiếm
-    return "Không tìm thấy thông tin liên quan trên Google."
-
-# Hàm lấy thông tin thời tiết từ OpenWeatherMap
-def get_weather(city="Hanoi"):
-    params = {
-        'q': city,
-        'appid': WEATHER_API_KEY,
-        'units': 'metric',  # Đơn vị: Celsius
-        'lang': 'vi'  # Ngôn ngữ: Tiếng Việt
-    }
-    response = requests.get(weather_url, params=params)
-    data = response.json()
+    # Tạo bảng nếu chưa tồn tại
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS knowledge (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        question VARCHAR(255),
+        answer TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
     
-    if data.get('cod') == 200:
-        temperature = data['main']['temp']
-        weather_description = data['weather'][0]['description']
-        return f"Thời tiết hiện tại ở {city} là {temperature}°C, {weather_description}."
-    return "Không thể lấy thông tin thời tiết."
-
-# Bộ câu hỏi mẫu (FAQ) và câu trả lời
-faq = {
-    "Thời tiết hôm nay như thế nào?": get_weather(),  # Thời tiết sẽ được lấy từ API
-    "Giới thiệu về Hà Nội?": "Hà Nội là thủ đô của Việt Nam, nổi tiếng với các di tích lịch sử và văn hóa như Văn Miếu, Hoàng Thành Thăng Long.",
-    "Cách tính diện tích hình tròn?": "Diện tích hình tròn được tính bằng công thức A = πr², trong đó r là bán kính của hình tròn.",
-    "Ai là người phát minh ra điện thoại?": "Người phát minh ra điện thoại là Alexander Graham Bell vào năm 1876.",
-    "Làm thế nào để học lập trình Python?": "Để học lập trình Python, bạn có thể bắt đầu từ các khóa học miễn phí trực tuyến như Codecademy, Coursera hoặc Udemy."
-}
-
-# Đăng ký người dùng
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        hashed_password = hash_password(password)
-        
-        # Kiểm tra nếu email đã tồn tại
-        cursor = mysql.connection.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-        user = cursor.fetchone()
-        if user:
-            flash('Email đã tồn tại', 'danger')
-            return redirect(url_for('register'))
-        
-        cursor.execute("INSERT INTO users (email, password) VALUES (%s, %s)", (email, hashed_password))
-        mysql.connection.commit()
-        cursor.close()
-        flash('Đăng ký thành công! Bạn có thể đăng nhập ngay', 'success')
-        return redirect(url_for('login'))
+    # Thêm dữ liệu mẫu
+    cursor.execute('''
+    INSERT INTO knowledge (question, answer) 
+    VALUES 
+        ('cách reset máy tính', 'Vào Settings > Update & Security > Recovery > Reset this PC'),
+        ('cài đặt phần mềm', 'Tải file cài đặt và chạy file .exe hoặc .dmg')
+    ''')
     
-    return render_template('register.html')
+    conn.commit()
+    conn.close()
 
-# Đăng nhập
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        
-        cursor = mysql.connection.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-        user = cursor.fetchone()
-        cursor.close()
-        
-        if user and check_password(user[2], password):  # user[2] là cột password
-            session['user_id'] = user[0]  # Lưu id người dùng vào session
-            return redirect(url_for('chat'))
-        
-        flash('Sai email hoặc mật khẩu', 'danger')
-    
-    return render_template('login.html')
+# Khởi tạo database khi chạy ứng dụng
+init_db()
 
-# Trang chat và sử dụng BERT để trả lời câu hỏi
-@app.route('/chat', methods=['GET', 'POST'])
+# ========== AI CORE ==========
+class ByByAI:
+    def __init__(self):
+        self.responses = {
+            'greet': ['Xin chào! Tôi là ByBy PC AI', 'Chào bạn!', 'Hello!'],
+            'goodbye': ['Tạm biệt!', 'Hẹn gặp lại bạn!'],
+            'error': 'Xin lỗi, tôi chưa hiểu yêu cầu của bạn'
+        }
+
+    def get_mysql_response(self, query, params=None):
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(query, params or ())
+        result = cursor.fetchall()
+        conn.close()
+        return result
+
+    def respond(self, message):
+        msg = message.lower()
+        
+        # Xử lý câu chào hỏi
+        if any(w in msg for w in ['xin chào', 'hello', 'hi', 'chào']):
+            return self.responses['greet'][0]
+        
+        if any(w in msg for w in ['tạm biệt', 'bye', 'goodbye']):
+            return self.responses['goodbye'][0]
+        
+        # Tìm trong database MySQL
+        try:
+            # Tìm câu hỏi tương tự
+            questions = [q['question'] for q in 
+                        self.get_mysql_response("SELECT question FROM knowledge")]
+            
+            match = get_close_matches(msg, questions, n=1, cutoff=0.6)
+            if match:
+                result = self.get_mysql_response(
+                    "SELECT answer FROM knowledge WHERE question = %s", 
+                    (match[0],)
+                )
+                if result:
+                    return result[0]['answer']
+        except Exception as e:
+            print("Lỗi MySQL:", e)
+        
+        return self.responses['error']
+
+ai = ByByAI()
+
+# ========== FLASK ROUTES ==========
+HTML_TEMPLATE = """
+<!doctype html>
+<html>
+<head>
+    <title>ByBy PC AI</title>
+    <style>
+        body { 
+            font-family: 'Arial', sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background-color: #f5f5f5;
+        }
+        #chat-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        #chatbox { 
+            height: 400px; 
+            overflow-y: auto; 
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .user-message {
+            background: #e3f2fd;
+            padding: 8px 12px;
+            border-radius: 18px;
+            margin: 5px 0;
+            display: inline-block;
+            max-width: 80%;
+            float: right;
+            clear: both;
+        }
+        .bot-message {
+            background: #f1f1f1;
+            padding: 8px 12px;
+            border-radius: 18px;
+            margin: 5px 0;
+            display: inline-block;
+            max-width: 80%;
+            float: left;
+            clear: both;
+        }
+        #user-input {
+            width: calc(100% - 90px);
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            outline: none;
+        }
+        #send-btn {
+            width: 80px;
+            padding: 10px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .clearfix::after {
+            content: "";
+            clear: both;
+            display: table;
+        }
+    </style>
+</head>
+<body>
+    <div id="chat-container">
+        <h1>ByBy PC AI</h1>
+        <div id="chatbox"></div>
+        <div class="clearfix">
+            <input type="text" id="user-input" placeholder="Nhập tin nhắn...">
+            <button id="send-btn" onclick="sendMessage()">Gửi</button>
+        </div>
+    </div>
+
+    <script>
+        function addMessage(sender, message) {
+            const chatbox = document.getElementById('chatbox');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = sender + '-message';
+            msgDiv.textContent = message;
+            chatbox.appendChild(msgDiv);
+            chatbox.scrollTop = chatbox.scrollHeight;
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+            
+            if (message) {
+                addMessage('user', message);
+                input.value = '';
+                
+                fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                })
+                .then(response => response.json())
+                .then(data => addMessage('bot', data.response))
+                .catch(error => addMessage('bot', 'Lỗi kết nối'));
+            }
+        }
+
+        // Cho phép gửi bằng phím Enter
+        document.getElementById('user-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/chat', methods=['POST'])
 def chat():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    answer = None
-    question = ""
-    
-    if request.method == 'POST':
-        question = request.form['message']
-        
-        # Kiểm tra nếu câu hỏi có trong bộ câu hỏi mẫu (FAQ)
-        if question in faq:
-            answer = faq[question]
-        else:
-            # Đoạn văn mẫu (có thể được lấy từ API thời tiết hoặc bất kỳ nguồn dữ liệu nào)
-            context = "Hà Nội có mùa hè nóng bức và mùa đông se lạnh. Thời tiết hôm nay rất đẹp và dễ chịu."
-            
-            # Sử dụng BERT để trả lời câu hỏi
-            answer = get_bert_answer(question, context)
-            
-            # Nếu BERT không trả lời được, tra cứu Google
-            if not answer or answer == "[CLS]":
-                answer = google_search(question)
-        
-        # Lưu cuộc trò chuyện vào cơ sở dữ liệu
-        cursor = mysql.connection.cursor()
-        cursor.execute("INSERT INTO chats (user_id, message) VALUES (%s, %s)", (session['user_id'], f"Q: {question} A: {answer}"))
-        mysql.connection.commit()
-        cursor.close()
-        
-        flash('Câu trả lời đã được ghi nhận!', 'success')
-        
-    return render_template('chat.html', answer=answer, question=question)
-
-# Đăng xuất
-@app.route('/logout')
-def logout():
-    session.pop('user_id', None)  # Xóa user_id khỏi session
-    return redirect(url_for('login'))
-
-# Xuất lịch sử trò chuyện
-@app.route('/chat-history')
-def chat_history():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    cursor = mysql.connection.cursor()
-    cursor.execute("SELECT * FROM chats WHERE user_id = %s", (session['user_id'],))
-    chats = cursor.fetchall()
-    cursor.close()
-    
-    return render_template('chat_history.html', chats=chats)
-
-# Trang admin để xem người dùng và lịch sử trò chuyện
-@app.route('/admin')
-def admin():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    # Kiểm tra nếu người dùng là admin
-    cursor = mysql.connection.cursor()
-    cursor.execute("SELECT username FROM users WHERE id = %s", (session['user_id'],))
-    user = cursor.fetchone()
-    if user[0] != 'admin':  # Kiểm tra nếu người dùng không phải admin
-        return redirect(url_for('chat'))
-    
-    # Lấy danh sách người dùng và lịch sử trò chuyện
-    cursor.execute("SELECT * FROM users")
-    users = cursor.fetchall()
-    cursor.execute("SELECT * FROM chats")
-    chats = cursor.fetchall()
-    cursor.close()
-    
-    return render_template('admin.html', users=users, chats=chats)
-
-# Xử lý lỗi 404
-@app.errorhandler(404)
-def not_found_error(error):
-    return render_template('404.html'), 404
+    data = request.json
+    response = ai.respond(data['message'])
+    return jsonify({'response': response})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
